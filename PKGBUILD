@@ -81,6 +81,7 @@ _hprefix_generic_tools=true
 # start of prepare() so a missing file fails before any extraction.
 _shared_scripts=(
   'devecostudio.sh'
+  'clangd-lsp-wrapper'
   'install-extra-sdk.sh'
   'patch-extra-sdk.sh'
   'patch-previewer.py'
@@ -456,6 +457,21 @@ for dirpath, dirnames, filenames in os.walk(root):
         except OSError:
             pass
 PYEOF
+
+  msg2 "Installing the C/C++ language server (clangd) shim..."
+  # The cpp-lsp plugin resolves its server from a hardcoded path and calls
+  # File#setExecutable(true) on it:
+  #   tools/llvm/server/lsp/linux/clangd
+  # Huawei's tools/llvm is Mac/Windows-only and excluded above, so install a
+  # wrapper around the SDK clangd; it drops the two Huawei-private options
+  # (--sdk-cache-path/--sdk-default-path) that stock clangd rejects. The
+  # install hooks chown the file to the desktop user: setExecutable() is a
+  # chmod, so a root-owned file fails even when it is already executable.
+  mkdir -p "$_pkg/tools/llvm/server/lsp/linux"
+  cat "$startdir/scripts/clangd-lsp-wrapper" > "$_pkg/tools/llvm/server/lsp/linux/clangd"
+  chmod +x "$_pkg/tools/llvm/server/lsp/linux/clangd"
+  [[ -x "$_pkg/sdk/default/openharmony/native/llvm/bin/clangd" ]] \
+    || { error "SDK clangd missing; the C/C++ language server wrapper would be dead"; exit 1; }
 
   msg2 "Cleaning platform cruft..."
   find "$_pkg" -name '*.exe' -not -name 'Emulator.exe' -delete

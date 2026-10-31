@@ -293,6 +293,22 @@ rendering engine to Linux.
 This also means `hvigorw test` (local unit tests run through the previewer)
 cannot pass. It should fails within seconds.
 
+### C/C++ code intelligence
+
+The C++ plugin expects its language server at
+`/opt/devecostudio/tools/llvm/server/lsp/linux/clangd`. The package installs a
+shim there around the SDK's clangd and, from the install hook, gives that file
+to the installing user — the plugin must be able to `chmod` it, otherwise it
+reports `clangd setExecutable failed` and disables C/C++ support.
+
+The tarball has no install hook, and on a multi-user machine only the user the
+hook picked gets C/C++ support. In those cases run this once as the user who
+runs the IDE:
+
+```sh
+sudo chown "$USER": /opt/devecostudio/tools/llvm/server/lsp/linux/clangd
+```
+
 ## How does this work?
 
 The PKGBUILD extracts the Mac DMG and takes the platform-independent parts,

@@ -420,6 +420,56 @@ user-level `devecostudio64.vmoptions` in the config dir works the same
 way). `DEVECO_UI_SCALE` overrides the value (any number, as-is); `off`
 skips the injection and leaves scaling to the JVM.
 
+### C/C++ language server (clangd)
+
+The cpp-lsp plugin does not look for clangd on `PATH`. Its decompiled
+`DevEcoStudioLspConfiguration#getCertainPath` hardcodes one path per
+platform below `<IDE home>`:
+
+| platform | path |
+|---|---|
+| Windows | `tools/llvm/server/lsp/win/clangd.exe` |
+| Linux | `tools/llvm/server/lsp/linux/clangd` |
+| macOS arm64 | `tools/llvm/server/lsp/mac-aarch64/clangd` |
+| macOS x64 | `tools/llvm/server/lsp/mac-x64/clangd` |
+
+Huawei's `tools/llvm` is Mac/Windows-only and excluded in `prepare()`, so in
+this port the file does not exist. The plugin then calls
+`File#setExecutable(true)`; when that returns `false` it shows the notification
+**"clangd setExecutable failed"** and returns `Optional.empty()` — C/C++
+completion, navigation and diagnostics stay off for the whole session.
+
+Two details break the obvious fixes:
+
+- **The SDK clangd cannot simply be linked there.** The IDE passes two
+  Huawei-private options to its own clangd build, `--sdk-cache-path=` and
+  `--sdk-default-path=`; `sdk/default/openharmony/native/llvm/bin/clangd`
+  (15.0.4, the same toolchain projects compile with) exits with
+  `Unknown command line argument` on them. `scripts/clangd-lsp-wrapper`
+  strips exactly those two and `exec`s the SDK binary. The other options the
+  IDE passes are standard and accepted (`--compile-commands-dir=`,
+  `--completion-style=detailed`, `--log=error`, `--use-dirty-headers`).
+  Header resolution works through the CMake `compile_commands.json` the
+  IDE writes during project sync; only Huawei's SDK index cache is lost.
+- **Ownership, not the mode, is what matters.** `File#setExecutable(true)`
+  is a `chmod`, so Java returns `false` for a root-owned file *even when it
+  is already executable* (verified with the bundled JBR against a root-owned
+  `/bin/ls`). The package therefore ships the wrapper `0755` and the install
+  hooks (`devecostudio.install`, `scripts/postinstall.sh`) `chown` it to
+  `$SUDO_USER`, falling back to the first `loginctl` user. An upgrade
+  reinstalls the file root-owned, so the `post_install`/`post_upgrade` hooks
+  repeat the `chown`.
+
+Limits: on a machine with several desktop users only the hook's user gets
+working C/C++ support; the distro-agnostic tarball has no hooks, and an image
+build has no user yet. In those cases run
+
+```sh
+sudo chown "$USER": /opt/devecostudio/tools/llvm/server/lsp/linux/clangd
+```
+
+once as the user who will run the IDE.
+
 ### Permissions and executability
 
 Mac DMG files ship 700; `cp -a` preserves that, so the package does a
@@ -755,6 +805,9 @@ are the single source of truth — the PKGBUILD references them via
   JCEF workaround, headless JCEF args, software-GL fallback,
   `~/Library/Huawei/Sdk` bridge, appanalyzer requirements case-bridge +
   torchvision seed)
+- `scripts/clangd-lsp-wrapper` — the C/C++ language-server shim installed as
+  `tools/llvm/server/lsp/linux/clangd`; strips Huawei-private clangd options
+  (see "C/C++ language server (clangd)")
 - `scripts/install-extra-sdk.sh` — the extra-SDK installer (bsdtar/unzip
   extraction, then calls `patch-extra-sdk.sh`); installed to
   `bin/install-extra-sdk.sh`
@@ -934,6 +987,10 @@ each is ~3–4 GB:
 
 - [ ] `devecostudio --version` prints the right build
 - [ ] Project opens; hvigor **sync** succeeds (no Node.js path warning)
+- [ ] C/C++ support: open a file under a module's `src/main/cpp` — completion
+      works, no "clangd setExecutable failed" notification
+      (`ls -l /opt/devecostudio/tools/llvm/server/lsp/linux/clangd` is owned
+      by the desktop user)
 - [ ] CEF UI works: project structure dialog, markdown preview
 - [ ] Device Manager: emulator list loads; create/start/stop/edit/delete
 - [ ] Debugging from the run panel (emulator started via CLI or IDE)

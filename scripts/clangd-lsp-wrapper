@@ -1,0 +1,22 @@
+#!/bin/bash
+# DevEco's cpp-lsp plugin does not search PATH for clangd: it hardcodes
+#   <IDE home>/tools/llvm/server/lsp/linux/clangd
+# (see DevEcoStudioLspConfiguration#getCertainPath) and calls
+# File#setExecutable(true) on it before launching. Huawei's tools/llvm is
+# Mac/Windows-only, so this port cannot ship it; forward to the Linux clangd
+# that ships with the SDK instead.
+#
+# The IDE also passes two Huawei-private options to its own clangd build,
+# --sdk-cache-path= and --sdk-default-path=. Stock clangd rejects unknown
+# options and would exit immediately, so drop exactly those two and keep the
+# rest (--compile-commands-dir=, --completion-style=, --log=,
+# --use-dirty-headers are all standard clangd options). Header resolution
+# still works through the compile_commands.json the IDE writes during sync.
+args=()
+for a in "$@"; do
+    case "$a" in
+        --sdk-cache-path=*|--sdk-default-path=*) ;;
+        *) args+=("$a") ;;
+    esac
+done
+exec /opt/devecostudio/sdk/default/openharmony/native/llvm/bin/clangd "${args[@]}"
