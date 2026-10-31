@@ -91,17 +91,21 @@ Two consequences of the symlink:
 
 ### Emulator bzip2 soname (`libbz2.so.1.0` -> `libbz2.so.1`)
 
-The emulator binary and its bundled `libavformat.so` were linked against the
-Debian-style bzip2 soname `libbz2.so.1.0`. Fedora, RHEL and openEuler ship
+The x86_64 emulator binary and its bundled `libavformat.so` were linked
+against the Debian-style bzip2 soname `libbz2.so.1.0` (the arm64 `Emulator`
+does not link libbz2 at all). Fedora, RHEL and openEuler ship
 `bzip2-libs` whose soname is `libbz2.so.1`, so there the emulator dies with
 `error while loading shared libraries: libbz2.so.1.0` — and because the IDE
 queries the emulator every second for the device list and the Device Manager,
 the device list stays empty instead of showing an error.
 
 `libbz2.so.1` exists on Debian (`libbz2-1.0`), Fedora (`bzip2-libs`) and Arch
-(`bzip2`) alike, so `package()` retargets both objects with
-`patchelf --replace-needed libbz2.so.1.0 libbz2.so.1` and then asserts the new
-name with `patchelf --print-needed`. The retarget is done at build time rather
+(`bzip2`) alike, so `package()` retargets the objects that still ask for the
+old soname with `patchelf --replace-needed libbz2.so.1.0 libbz2.so.1` and then
+asserts the new name with `patchelf --print-needed`. `--replace-needed` is a
+silent no-op when the name is absent, so the loop checks `--print-needed`
+first and skips objects without the dependency; the assertion only runs after
+an actual replacement. The retarget is done at build time rather
 than by an install hook for two reasons: the distro-agnostic tarball has no
 install hooks at all, and a symlink created inside `/opt/devecostudio` by a
 postinstall script is unowned by the package and would also run on removal

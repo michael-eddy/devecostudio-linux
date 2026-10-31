@@ -227,14 +227,20 @@ package() {
   # hardcodes the "Emulator.exe" name. Symlink it to the real binary so
   # Device Manager and debugging work on Linux.
   ln -sf Emulator "$_pkg/tools/emulator/Emulator.exe"
-  # The emulator and its libavformat.so ask for the Debian bzip2 soname
-  # libbz2.so.1.0; Fedora/RHEL/openEuler ship libbz2.so.1 only, so the
-  # emulator dies there and the IDE's device list stays empty. libbz2.so.1
-  # exists on Debian, Fedora and Arch alike, so retarget it at build time —
-  # an install hook could not cover the tarball. See DETAILS.md.
+  # The x86_64 emulator and its libavformat.so ask for the Debian bzip2
+  # soname libbz2.so.1.0; Fedora/RHEL/openEuler ship libbz2.so.1 only, so
+  # the emulator dies there and the IDE's device list stays empty.
+  # libbz2.so.1 exists on Debian, Fedora and Arch alike, so retarget it at
+  # build time — an install hook could not cover the tarball. See DETAILS.md.
+  # The arm64 Emulator has no libbz2 dependency at all, and replace-needed
+  # is a silent no-op when the old soname is absent, so only rewrite (and
+  # assert) the objects that actually reference it.
   for _e in Emulator libavformat.so; do
-    patchelf --replace-needed libbz2.so.1.0 libbz2.so.1 "$_pkg/tools/emulator/$_e"
-    patchelf --print-needed "$_pkg/tools/emulator/$_e" | grep -qx 'libbz2\.so\.1' \
+    _emu_bin="$_pkg/tools/emulator/$_e"
+    [[ -f "$_emu_bin" ]] || continue
+    patchelf --print-needed "$_emu_bin" 2>/dev/null | grep -qx 'libbz2\.so\.1\.0' || continue
+    patchelf --replace-needed libbz2.so.1.0 libbz2.so.1 "$_emu_bin"
+    patchelf --print-needed "$_emu_bin" | grep -qx 'libbz2\.so\.1' \
       || { error "patchelf did not retarget libbz2 in $_e"; exit 1; }
   done
   cp -a "$_cli/tool/node/" "$_pkg/tools/node/"
