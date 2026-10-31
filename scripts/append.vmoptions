@@ -1,3 +1,4 @@
 -Dawt.lock.fair=true
 -Dsun.tools.attach.tmp.only=true
 -Dglfw.im.module=fcitx
+-Dide.browser.jcef.log.path=/tmp

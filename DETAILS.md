@@ -358,6 +358,9 @@ sed-converted:
 - drops `-Djava.security.manager` and the `-Dwsl` line
 - appends `-Dawt.lock.fair=true`, `-Dsun.tools.attach.tmp.only=true`,
   `-Dglfw.im.module=fcitx` (GLFW IME module for JBR 25)
+- appends `-Dide.browser.jcef.log.path=/tmp`: JCEF's `SettingsHelper`
+  writes `jcef_<pid>.log` to `user.home` unless this property overrides
+  the directory
 
 `product-info.json` is not a static file — it is extracted from the DMG
 and transformed with `jq` at build time: OS/arch/launcher/java/vmoptions

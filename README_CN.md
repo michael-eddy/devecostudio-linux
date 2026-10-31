@@ -293,6 +293,8 @@ IDE 大部分功能在 Wayland 下正常，但基于 CEF 的界面——项目�
 
 启动器默认还启用了 JCEF 的 headless + 子进程渲染（相当于注册表中的 `ide.browser.jcef.headless.enabled` 和 `ide.browser.jcef.out-of-process.enabled`），可解决特定环境下 CEF 页面空白的问题。如需关闭，启动前设置 `DEVECO_DISABLE_JCEF_HEADLESS=1`。
 
+JCEF 的 `jcef_<pid>.log` 日志文件通过打包的 vmoptions 从用户主目录重定向到 `/tmp`。
+
 ### 软件渲染（LLVMpipe）
 
 当厂商 DRM 驱动加载失败时（ARM 开发板常见：Mesa 报 `failed to load driver: sunxi-drm`，`glxinfo -B` 显示 `Accelerated: no`），Mesa 会回退到 CPU 光栅化。在这种回退路径上，GL 只画得出第一帧，之后每次重绘都会把窗口清成黑色——鼠标在按钮上悬停一下，窗口就没了。

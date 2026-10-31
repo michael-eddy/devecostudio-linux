@@ -371,6 +371,9 @@ default (equivalent to `ide.browser.jcef.headless.enabled` and
 blank CEF pages in some environments. Set `DEVECO_DISABLE_JCEF_HEADLESS=1`
 before launching to opt out.
 
+JCEF's `jcef_<pid>.log` files are redirected from the home directory to
+`/tmp` by the packaged vmoptions.
+
 ### Software rendering (LLVMpipe)
 
 When the vendor DRM driver fails to load — common on ARM SBCs, where Mesa
