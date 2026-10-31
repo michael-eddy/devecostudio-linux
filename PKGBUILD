@@ -27,7 +27,7 @@ pkgver=26.0.0.851
 _ideaver=2026.1.3
 _cpythonver=3.12.10
 _cpythonrel=20250409
-pkgrel=3
+pkgrel=4
 # ── Target architecture ──
 # makepkg sets CARCH; build.sh exports it (defaults to the host, --arch to
 # override). Every native component comes from the target-arch archive (IDEA

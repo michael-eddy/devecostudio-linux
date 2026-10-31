@@ -349,6 +349,24 @@ default (equivalent to `ide.browser.jcef.headless.enabled` and
 blank CEF pages in some environments. Set `DEVECO_DISABLE_JCEF_HEADLESS=1`
 before launching to opt out.
 
+### Software rendering (LLVMpipe)
+
+When the vendor DRM driver fails to load — common on ARM SBCs, where Mesa
+prints `failed to load driver: sunxi-drm` and `glxinfo -B` reports
+`Accelerated: no` — Mesa falls back to CPU rasterization. On that fallback
+the GL path still paints the first frame, but clears the window to black on
+every repaint; moving the mouse over a button is enough to lose the window.
+
+If `glxinfo -B` reports `Accelerated: no` (or, without `glxinfo`, when no
+`/dev/dri/renderD*` node exists) the launcher passes
+`-Dskiko.renderApi=SOFTWARE -Dsun.java2d.opengl=false`, keeping Compose and
+Java2D off the broken GL path.
+
+Override the detection:
+
+    DEVECO_RENDER_MODE=software devecostudio   # force software rendering
+    DEVECO_RENDER_MODE=gl devecostudio         # keep GL when detected as software
+
 ### HiDPI
 
 XWayland does not report per-monitor scale to the JVM (it reports 1.0), so

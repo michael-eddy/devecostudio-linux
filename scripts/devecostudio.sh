@@ -41,6 +41,33 @@ if [[ "${DEVECO_DISABLE_X11_WORKAROUND:-0}" != "1" ]]; then
   unset WAYLAND_DISPLAY
   export GDK_BACKEND=x11
 fi
+# Skiko (Compose) and Java2D both take the GL path by default. Where the
+# vendor DRM driver fails to load, Mesa falls back to llvmpipe and that path
+# paints the first frame, then clears the window to black on every repaint
+# (hovering a button is enough). Detect CPU rasterization and keep both off
+# GL there. DEVECO_RENDER_MODE: auto (detect, default), software, or gl.
+_software_gl() {
+  if command -v glxinfo >/dev/null 2>&1; then
+    local out
+    out=$(glxinfo -B 2>/dev/null) || return 1
+    printf '%s\n' "$out" | grep -q 'Accelerated: no'
+    return
+  fi
+  # No probe tool: only a DRM render node suggests a usable GPU path.
+  ! compgen -G '/dev/dri/renderD*' >/dev/null
+}
+_RENDER_ARGS=()
+case "${DEVECO_RENDER_MODE:-auto}" in
+  software) _RENDER_ARGS=("-Dskiko.renderApi=SOFTWARE" "-Dsun.java2d.opengl=false") ;;
+  gl) ;;
+  auto)
+    _software_gl && _RENDER_ARGS=("-Dskiko.renderApi=SOFTWARE" "-Dsun.java2d.opengl=false")
+    ;;
+  *)
+    printf 'Ignoring invalid DEVECO_RENDER_MODE=%q (expected auto, software, or gl)\n' \
+      "$DEVECO_RENDER_MODE" >&2
+    ;;
+esac
 # JCEF headless + out-of-process rendering fixes blank CEF pages in some
 # environments (DEVECO_DISABLE_JCEF_HEADLESS=1 to opt out).
 _JCEF_ARGS=()
@@ -92,4 +119,4 @@ if os.path.exists(p) and os.path.getsize(p) > 0:
         pass
 PYEOF
 fi
-exec "$(dirname "$(readlink -f "$0")")/devecostudio" "${_JCEF_ARGS[@]}" "$@"
+exec "$(dirname "$(readlink -f "$0")")/devecostudio" "${_JCEF_ARGS[@]}" "${_RENDER_ARGS[@]}" "$@"

@@ -656,8 +656,11 @@ The wrapper (devecostudio.sh) responsibilities, in order:
 1. `_JAVA_AWT_WM_NONREPARENTING=1`
 2. `QT_QPA_PLATFORM=xcb` (emulator Qt)
 3. X11 backend for JCEF unless `DEVECO_DISABLE_X11_WORKAROUND=1`
-4. `~/Library/Huawei/Sdk` → `~/.Huawei/Sdk` bridge (emulator images)
-5. exec the real launcher via `readlink -f` on `$0` (works through the
+4. `-Dskiko.renderApi=SOFTWARE -Dsun.java2d.opengl=false` when Mesa reports
+   llvmpipe, otherwise the window turns black on every repaint;
+   `DEVECO_RENDER_MODE` (auto/software/gl) overrides the detection
+5. `~/Library/Huawei/Sdk` → `~/.Huawei/Sdk` bridge (emulator images)
+6. exec the real launcher via `readlink -f` on `$0` (works through the
    `/usr/bin` symlink)
 
 ## Maintenance checklist
@@ -669,8 +672,9 @@ are the single source of truth — the PKGBUILD references them via
 `$startdir/scripts/...` (makepkg cannot take subdirectory local sources):
 
 - `scripts/devecostudio.sh` — the launcher wrapper (HiDPI injection, X11
-  JCEF workaround, headless JCEF args, `~/Library/Huawei/Sdk` bridge,
-  appanalyzer requirements case-bridge + torchvision seed)
+  JCEF workaround, headless JCEF args, software-GL fallback,
+  `~/Library/Huawei/Sdk` bridge, appanalyzer requirements case-bridge +
+  torchvision seed)
 - `scripts/install-extra-sdk.sh` — the extra-SDK installer (bsdtar/unzip
   extraction, then calls `patch-extra-sdk.sh`); installed to
   `bin/install-extra-sdk.sh`
@@ -684,7 +688,7 @@ are the single source of truth — the PKGBUILD references them via
   `sed`-inserted into the Emulator wrapper
 - `scripts/python3-wrapper` — the pip `--no-deps`/`--no-index` stripping
   shim installed as the bundled python3
-- `scripts/vmoptions.append` — the Linux-specific vmoptions lines appended
+- `scripts/append.vmoptions` — the Linux-specific vmoptions lines appended
   after the DMG's macOS vmoptions conversion
 
 They are NOT in `source=()` (no checksums): they are repo files like

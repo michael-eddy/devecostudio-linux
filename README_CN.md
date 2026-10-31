@@ -291,6 +291,17 @@ IDE 大部分功能在 Wayland 下正常，但基于 CEF 的界面——项目�
 
 启动器默认还启用了 JCEF 的 headless + 子进程渲染（相当于注册表中的 `ide.browser.jcef.headless.enabled` 和 `ide.browser.jcef.out-of-process.enabled`），可解决特定环境下 CEF 页面空白的问题。如需关闭，启动前设置 `DEVECO_DISABLE_JCEF_HEADLESS=1`。
 
+### 软件渲染（LLVMpipe）
+
+当厂商 DRM 驱动加载失败时（ARM 开发板常见：Mesa 报 `failed to load driver: sunxi-drm`，`glxinfo -B` 显示 `Accelerated: no`），Mesa 会回退到 CPU 光栅化。在这种回退路径上，GL 只画得出第一帧，之后每次重绘都会把窗口清成黑色——鼠标在按钮上悬停一下，窗口就没了。
+
+当 `glxinfo -B` 报告 `Accelerated: no`（或没有 `glxinfo` 且不存在 `/dev/dri/renderD*` 节点）时，启动器会传入 `-Dskiko.renderApi=SOFTWARE -Dsun.java2d.opengl=false`，让 Compose 和 Java2D 都不再走这条坏掉的 GL 路径。
+
+覆盖检测结果：
+
+    DEVECO_RENDER_MODE=software devecostudio   # 强制软件渲染
+    DEVECO_RENDER_MODE=gl devecostudio         # 即使检测为软件也保留 GL
+
 ### HiDPI
 
 XWayland 不会向 JVM 报告 per-monitor 缩放（它报告 1.0），因此在 HiDPI 屏幕上 IDE 会把 UI 缩放锁定为 1.0——太小。启动器会读取合成器的真实缩放（`wlr-randr`），四舍五入到最近的 0.25 步，并通过用户级 vmoptions 覆盖文件以 `-Dide.ui.scale` 注入。
