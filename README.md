@@ -63,9 +63,10 @@ What to do next depends on your distro:
 The host architecture picks the sources, so this builds the aarch64 package on
 Arch Linux ARM and the x86_64 package everywhere else.
 
-If you find checksum errors, it means Huawei has updated the IDE, and you will need to test for yourself whether this project still works.
-
-To update checksums to match your local files:
+The two Huawei zips are not checksum-verified (`SKIP` in `sha256sums`): their
+download URLs are signed and short-lived, and Huawei republishes the same
+version with different bytes. The IDEA and CPython tarballs are verified; if
+one of those reports a mismatch, update the sums with:
 
     updpkgsums
 
@@ -78,7 +79,7 @@ To update checksums to match your local files:
 
 You will need these dependencies:
 
-    bsdtar or unzip, 7z, jq, python3, curl, binutils
+    bsdtar or unzip, 7z, jq, python3, curl, binutils, patchelf
 
 To also build .deb/.rpm packages:
 
@@ -100,9 +101,8 @@ machine is the same build. Building for the *other* architecture is refused:
 the JBR, the launcher, node, the Emulator and the SDK host toolchains all come
 from target-arch archives.
 
-Note: `build.sh` does **not** verify the two Huawei zips, 
-while IDEA and CPython are downloaded with checksum
-verification from the PKGBUILD's `sha256sums`.
+Note: `build.sh` does **not** verify the two Huawei zips (they are `SKIP` in
+`sha256sums`); IDEA and CPython are downloaded with checksum verification.
 
 </ul>
 </details>
@@ -123,10 +123,13 @@ The same build can be run in GitHub Actions:
 4. Pick **`target_arch`** (`x86_64` or `aarch64`) and fill in the two download URLs:
    - `mac_zip_url` — URL of the Mac zip
    - `cli_zip_url` — URL of the Linux Command Line Tools zip *matching that architecture*
-5. Optionally override the version and checksums (leave empty to keep the values in `PKGBUILD`):
+5. Optionally override the version and checksums (leave empty to keep the defaults):
    - `pkgver` — e.g. `6.1.1.280`
-   - `mac_zip_sha256` / `cli_zip_sha256` — SHA256 of the two zips; use `SKIP` to skip verification for an untested version
-6. When the run finishes, download the artifact matching your platform:
+   - `mac_zip_sha256` / `cli_zip_sha256` — SHA256 of the two zips; leave empty to skip verification (the PKGBUILD's `SKIP` default)
+6. Choose which artifacts to build — unchecking one shortens the run, and
+   `.rpm` in particular adds the 16 GB swapfile and the slowest step:
+   - `make_arch`, `make_deb`, `make_rpm`, `make_tarball` (all on by default)
+7. When the run finishes, download the artifact matching your platform:
    - `devecostudio-arch-x86_64` — Arch package
    - `devecostudio-deb-<arch>` — Debian/Ubuntu package
    - `devecostudio-rpm-<arch>` — Fedora/RHEL package
@@ -168,9 +171,9 @@ Extract the tarball and set up the launcher manually:
 
 You also need the runtime dependencies (package names vary by distro):
 `libxss`, `libxtst`, `nss`, `alsa-lib`, `libxcrypt-compat`, `freetype2`,
-`libpulse`. Chinese input support needs `fcitx5`. Unlike the Arch package,
-the bundled CLI tools are not linked into `/usr/bin` — call them by full
-path under `/opt/devecostudio/tools/bin/`.
+`libpulse`, `bzip2`. Chinese input support needs `fcitx5`. Unlike the Arch
+package, the bundled CLI tools are not linked into `/usr/bin` — call them
+by full path under `/opt/devecostudio/tools/bin/`.
 
 </td></tr></thead></table>
 </details>
@@ -202,6 +205,10 @@ Both behaviors are controlled by variables at the top of the PKGBUILD:
     - They are still callable by full path under `/opt/devecostudio/tools/bin/`
 - `_hprefix_generic_tools=true`
     - If set to `false`, no `h` prefix is added; `codelinter` and `Emulator` are exposed under their original names
+
+Both only apply to the Arch package. The `/usr/bin` links in the `.deb` and
+`.rpm` are declared statically in `nfpm.yaml` — always the `h`-prefixed
+names — and the tarball ships no `/usr/bin` links at all.
 
 </td></tr></thead></table>
 </details>
@@ -246,7 +253,9 @@ will not compile against 6.1.1 — adjust or guard the code accordingly.
 ### Emulator
 
 The emulator works, but before first use you must accept the software
-agreements and download the system images via the command line.
+agreements and download a system image. The IDE's Device Manager lists the
+cloud images (non-public HarmonyOS images need a Huawei account signed in);
+the command line downloads them anonymously.
 
 <details>
 <summary><b>How?</b></summary>
@@ -315,12 +324,9 @@ distinguishes Mac from non-Mac, and the non-Mac branch hardcodes the
 Device Manager and debugging. The package fixes this with a symlink:
 `Emulator.exe -> Emulator` in `tools/emulator/`.
 
-Second, system images must be downloaded manually because of how the
-official installer works: when the emulator is missing, its wizard downloads
-the binary *and* the system image together. Since this package bundles the
-binary, the IDE thinks the emulator is installed and never offers the
-wizard, leaving the system image as the only missing piece — see the
-Emulator section above for how to get one.
+Second, the Device Manager lists the cloud system images — the IDE is
+patched to report `osType` `windows` to Huawei's server, which is what
+Huawei's own Linux CLI emulator does too.
 
 Third, the emulator's software agreements: the IDE launches the emulator
 binary directly, and if the agreements were never accepted it waits

@@ -9,7 +9,7 @@
 # from target-arch archives.
 #
 # Usage:
-#   ./build.sh [--arch=ARCH] [--deb] [--rpm] [--out DIR] [--clean]   full build
+#   ./build.sh [--arch=ARCH] [--deb] [--rpm] [--no-tarball] [--out DIR] [--clean]   full build
 #   ./build.sh --stage=pkg/devecostudio [--deb] [--rpm]  package an
 #       existing staging tree (e.g. makepkg's pkg/) without rebuilding
 set -euo pipefail
@@ -34,6 +34,7 @@ Options:
                the packaging, not for release.
   --deb        also build devecostudio_<ver>_<rel>_<deb_arch>.deb (needs nfpm)
   --rpm        also build devecostudio-<ver>-<rel>.<rpm_arch>.rpm (needs nfpm)
+  --no-tarball skip the tarball (when only .deb/.rpm matter)
   --stage=DIR  package an existing staging tree (e.g. makepkg's pkg/) and
                skip the build entirely
   --out=DIR    output directory for tarball/.deb/.rpm (default: .)
@@ -54,6 +55,7 @@ _clean=0
 want_deb=0
 want_rpm=0
 force_cross=0
+want_tarball=1
 outdir="."
 stage_dir=""
 _arch=""
@@ -61,6 +63,7 @@ for a in "$@"; do
   case "$a" in
     --deb) want_deb=1 ;;
     --rpm) want_rpm=1 ;;
+    --no-tarball) want_tarball=0 ;;
     --clean) _clean=1 ;;
     --force-cross) force_cross=1 ;;
     --arch=*) _arch="${a#--arch=}" ;;
@@ -180,21 +183,25 @@ else
   export pkgdir="$PWD/build/pkg"
   export startdir="$PWD"
   rm -rf "$pkgdir"
+  command -v patchelf >/dev/null 2>&1 \
+    || error "patchelf is required (the PKGBUILD retargets the emulator's libbz2 soname)"
   _msg "Running PKGBUILD prepare()/package()..."
   prepare
   package
   _msg "Staging tree ready: $pkgdir"
 fi
 
-# ── 3. Distro-agnostic tarball (always produced) ──
+# ── 3. Distro-agnostic tarball ──
 mkdir -p "$outdir"
-_msg "Building tarball..."
-chmod -R u+rw "$pkgdir/opt/devecostudio"
-cp "$pkgdir/usr/share/applications/devecostudio.desktop" "$pkgdir/opt/"
-tar -C "$pkgdir/opt" -I "gzip -1" -cf "$outdir/devecostudio-${pkgver}-linux-${CARCH}.tar.gz" \
-  devecostudio devecostudio.desktop
-rm -f "$pkgdir/opt/devecostudio.desktop"
-_msg "Created $outdir/devecostudio-${pkgver}-linux-${CARCH}.tar.gz"
+if (( want_tarball )); then
+  _msg "Building tarball..."
+  chmod -R u+rw "$pkgdir/opt/devecostudio"
+  cp "$pkgdir/usr/share/applications/devecostudio.desktop" "$pkgdir/opt/"
+  tar -C "$pkgdir/opt" -I "gzip -1" -cf "$outdir/devecostudio-${pkgver}-linux-${CARCH}.tar.gz" \
+    devecostudio devecostudio.desktop
+  rm -f "$pkgdir/opt/devecostudio.desktop"
+  _msg "Created $outdir/devecostudio-${pkgver}-linux-${CARCH}.tar.gz"
+fi
 
 # ── 4. Optional nfpm packaging ──
 # .deb and .rpm want different architecture spellings (arm64 vs aarch64),

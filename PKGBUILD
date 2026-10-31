@@ -27,7 +27,7 @@ pkgver=26.0.0.851
 _ideaver=2026.1.3
 _cpythonver=3.12.10
 _cpythonrel=20250409
-pkgrel=4
+pkgrel=5
 # ── Target architecture ──
 # makepkg sets CARCH; build.sh exports it (defaults to the host, --arch to
 # override). Every native component comes from the target-arch archive (IDEA
@@ -44,8 +44,6 @@ case "$CARCH" in
     _deb_arch=amd64
     _rpm_arch=x86_64
     _py_triple=x86_64-unknown-linux-gnu
-    _sha_mac=ad7f7100b3d95bacfa1b803ad1026c1e3b0f23cbb61c868f5684fbaa5b3772d8
-    _sha_cli=ab604bd92721d5cbcafd154e6461d46b9f1b105e7b89eab04a9d046681198082
     _sha_idea=a6f049716da1d09d9e0ec1500c60bf01a5ff8a0fe2419178dd1ff2fdb2b77563
     _sha_python=e9cf6f7da499a4400ba30ae1da8f7ef25ce97827bd8c1084717aa05438035186
     ;;
@@ -58,8 +56,6 @@ case "$CARCH" in
     _deb_arch=arm64
     _rpm_arch=aarch64
     _py_triple=aarch64-unknown-linux-gnu
-    _sha_mac=86289edeb2e8e30eb1adf80cba0fc55f0e57cdd4f6dc4ec9c59985a0bc4b8524
-    _sha_cli=c36fdba852ce02354ffcc1ad5f3ab4bdeac917403fe9bbbd60c499a4416246a0
     _sha_idea=7659e791609233c3e6bf67c1bfcc86f5fa1176477ca5815ae6125b0eae84a88b
     _sha_python=91557c4bc1f65c65c2bf1d0fc7a2816d21b1128f11d2d421af7bd5f6ce07232a
     ;;
@@ -68,10 +64,8 @@ case "$CARCH" in
     exit 1
     ;;
 esac
-# CI overrides the two user-supplied zip checksums through the environment
-# (workflow inputs mac_zip_sha256 / cli_zip_sha256) instead of sed-ing this file
-_sha_mac=${MAC_ZIP_SHA256:-$_sha_mac}
-_sha_cli=${CLI_ZIP_SHA256:-$_sha_cli}
+# CI can pin the two user-supplied zips through MAC_ZIP_SHA256 /
+# CLI_ZIP_SHA256; by default they are 'SKIP' (see sha256sums below)
 _idea_url=https://download.jetbrains.com/idea/$_idea_file
 _py_file=cpython-${_cpythonver}+${_cpythonrel}-${_py_triple}-install_only.tar.gz
 _py_url=https://github.com/astral-sh/python-build-standalone/releases/download/${_cpythonrel}/${_py_file}
@@ -90,6 +84,7 @@ _shared_scripts=(
   'install-extra-sdk.sh'
   'patch-extra-sdk.sh'
   'patch-previewer.py'
+  'patch-emulator-list.py'
   'emulator-wrapper-patch.sh'
   'python3-wrapper'
   'append.vmoptions'
@@ -108,11 +103,12 @@ depends=(
   'libxcrypt-compat'
   'freetype2'
   'libpulse'  # Emulator links system libpulse.so.0
+  'bzip2'     # Emulator links libbz2.so.1 (retargeted in package(), see below)
 )
 optdepends=(
   'fcitx5: Chinese input method support for JBR JCEF'
 )
-makedepends=('jq' 'p7zip' 'python')
+makedepends=('jq' 'p7zip' 'python' 'patchelf')
 options=('!strip')
 source=(
   "devecostudio-mac.zip"
@@ -121,11 +117,13 @@ source=(
   "devecostudio.desktop"
   "${_py_file}::${_py_url}"
 )
-# Positions match the source array (build.sh reads _sha_idea/_sha_python by
-# name, the CI override only ever touches the two Huawei zips)
+# The two Huawei zips default to 'SKIP': their download URLs are
+# signature-bearing and short-lived, and Huawei republishes the same version
+# with different bytes, so a pinned sum only ever breaks the build. Set
+# MAC_ZIP_SHA256 / CLI_ZIP_SHA256 to pin them for a reproducible build.
 sha256sums=(
-  "$_sha_mac"
-  "$_sha_cli"
+  "${MAC_ZIP_SHA256:-SKIP}"
+  "${CLI_ZIP_SHA256:-SKIP}"
   "$_sha_idea"
   'b530705424c7fdd61c3eaa477d6c79643e5d9d0cf7ecadc8f6e96559b7c6dc2d'
   "$_sha_python"
@@ -187,7 +185,8 @@ package() {
   local _idea=$(find "$srcdir" -mindepth 1 -maxdepth 1 -type d -name 'idea-IU-*' | head -1)
   local _cli="$srcdir/command-line-tools"
   local _pkg="$pkgdir/opt/devecostudio"
-  local _scripts=(devecostudio.sh install-extra-sdk.sh patch-extra-sdk.sh patch-previewer.py emulator-wrapper-patch.sh python3-wrapper append.vmoptions)
+  local _scripts=(devecostudio.sh install-extra-sdk.sh patch-extra-sdk.sh patch-previewer.py
+    patch-emulator-list.py emulator-wrapper-patch.sh python3-wrapper append.vmoptions)
   for _s in "${_scripts[@]}"; do
     if [[ ! -f "$startdir/scripts/$_s" ]]; then
       error "missing shared script: scripts/$_s (edit/commit scripts/ and rebuild)"
@@ -228,6 +227,16 @@ package() {
   # hardcodes the "Emulator.exe" name. Symlink it to the real binary so
   # Device Manager and debugging work on Linux.
   ln -sf Emulator "$_pkg/tools/emulator/Emulator.exe"
+  # The emulator and its libavformat.so ask for the Debian bzip2 soname
+  # libbz2.so.1.0; Fedora/RHEL/openEuler ship libbz2.so.1 only, so the
+  # emulator dies there and the IDE's device list stays empty. libbz2.so.1
+  # exists on Debian, Fedora and Arch alike, so retarget it at build time —
+  # an install hook could not cover the tarball. See DETAILS.md.
+  for _e in Emulator libavformat.so; do
+    patchelf --replace-needed libbz2.so.1.0 libbz2.so.1 "$_pkg/tools/emulator/$_e"
+    patchelf --print-needed "$_pkg/tools/emulator/$_e" | grep -qx 'libbz2\.so\.1' \
+      || { error "patchelf did not retarget libbz2 in $_e"; exit 1; }
+  done
   cp -a "$_cli/tool/node/" "$_pkg/tools/node/"
   # node symlinks (IDE expects node/npm/npx/corepack alongside bin/)
   (cd "$_pkg/tools/node" && ln -sf bin/* .)
@@ -278,6 +287,15 @@ package() {
   # The success path is left untouched.
   python3 "$startdir/scripts/patch-previewer.py" \
     "$_pkg/tools/hvigor/hvigor-ohos-plugin/node_modules/@ohos/coverage/lib/src/commandLine/localTest/previewer.js"
+
+  msg2 "Making the IDE report osType windows (cloud emulator images)..."
+  # Huawei's remote SDK manager returns no emulator images for osType
+  # "linux"; their own Linux CLI emulator hardcodes "windows" for exactly
+  # that reason. Only the sdk-core copy of OsTypeUtil is patched - the
+  # hwlib copy is used by the update checker and the template renderer
+  # and must keep reporting the truth. Skipped unless the emulator binary
+  # is x86_64, since the listed images could never boot elsewhere.
+  python3 "$startdir/scripts/patch-emulator-list.py" "$_pkg"
 
   msg2 "Transforming vmoptions (macOS → Linux)..."
   sed \

@@ -61,9 +61,7 @@ Tools zip、哪个 IDEA 归档以及哪个 CPython 构建。
 
 源文件按宿主架构选择：在 Arch Linux ARM 上这条命令构建 aarch64 包，在其他机器上构建 x86_64 包。
 
-如果出现校验和不符，说明华为更新了 IDE，你需要自行测试此项目是否仍然可用。
-
-要更新校验和以匹配你的本地文件：
+两个华为 zip 不做校验（`sha256sums` 里为 `SKIP`）：它们的下载链接带签名且短期有效，华为也会用不同的文件内容重发同一版本。IDEA 与 CPython 会校验；若这两项报不符，用下列命令更新：
 
     updpkgsums
 
@@ -76,7 +74,7 @@ Tools zip、哪个 IDEA 归档以及哪个 CPython 构建。
 
 你将需要以下依赖：
 
-    bsdtar 或 unzip, 7z, jq, python3, curl, binutils
+    bsdtar 或 unzip, 7z, jq, python3, curl, binutils, patchelf
 
 如你需要构建 .deb/.rpm，则额外需要：
 
@@ -96,7 +94,7 @@ Tools zip、哪个 IDEA 归档以及哪个 CPython 构建。
 目标架构默认取宿主架构；在 aarch64 机器上 `./build.sh --arch=aarch64` 与默认行为一致。
 **跨架构**构建会被拒绝：JBR、启动器、node、模拟器与 SDK 的宿主工具链全部来自目标架构的归档。
 
-注意：`build.sh` 并**不会**校验两个华为 zip。IDEA 和 CPython 则会按 PKGBUILD 的 `sha256sums` 校验。
+注意：`build.sh` 并**不会**校验两个华为 zip（`sha256sums` 中为 `SKIP`）。IDEA 和 CPython 则会按 PKGBUILD 的 `sha256sums` 校验。
 
 </ul>
 </details>
@@ -117,10 +115,12 @@ Tools zip、哪个 IDEA 归档以及哪个 CPython 构建。
 4. 选择 **`target_arch`**（`x86_64` 或 `aarch64`），并填写两个下载 URL：
    - `mac_zip_url` — Mac zip 的 URL
    - `cli_zip_url` — 与所选架构对应的 Linux Command Line Tools zip 的 URL
-5. 可选地覆盖版本号和校验值（留空则使用 `PKGBUILD` 中的值）：
+5. 可选地覆盖版本号和校验值（留空则使用默认值）：
    - `pkgver` — 例如 `6.1.1.280`
-   - `mac_zip_sha256` / `cli_zip_sha256` — 两个 zip 的 SHA256；未测试过的版本可用 `SKIP` 跳过校验
-6. 运行结束后，从运行页面下载对应平台的 artifact：
+   - `mac_zip_sha256` / `cli_zip_sha256` — 两个 zip 的 SHA256；留空则不校验（即 PKGBUILD 的 `SKIP` 默认值）
+6. 选择要构建的工件——取消勾选可缩短耗时，其中 `.rpm` 还会额外占用 16 GB 的 swapfile，是最慢的一步：
+   - `make_arch`、`make_deb`、`make_rpm`、`make_tarball`（默认全选）
+7. 运行结束后，从运行页面下载对应平台的 artifact：
    - `devecostudio-arch-x86_64` — Arch 包
    - `devecostudio-deb-<arch>` — Debian/Ubuntu 包
    - `devecostudio-rpm-<arch>` — Fedora/RHEL 包
@@ -159,7 +159,7 @@ tarball 适用于任何 Linux。
     sudo ln -s /opt/devecostudio/bin/devecostudio.sh /usr/local/bin/devecostudio
     sudo desktop-file-install /opt/devecostudio.desktop
 
-还需要安装运行时依赖（包名因发行版而异）：`libxss`、`libxtst`、`nss`、`alsa-lib`、`libxcrypt-compat`、`freetype2`、`libpulse`。中文输入支持需要 `fcitx5`。与 Arch 包不同，内置 CLI 工具不会链接到 `/usr/bin`——请用完整路径调用 `/opt/devecostudio/tools/bin/` 下的工具。
+还需要安装运行时依赖（包名因发行版而异）：`libxss`、`libxtst`、`nss`、`alsa-lib`、`libxcrypt-compat`、`freetype2`、`libpulse`、`bzip2`。中文输入支持需要 `fcitx5`。与 Arch 包不同，内置 CLI 工具不会链接到 `/usr/bin`——请用完整路径调用 `/opt/devecostudio/tools/bin/` 下的工具。
 
 </td></tr></thead></table>
 </details>
@@ -189,6 +189,8 @@ IDE 运行需要捆绑的华为命令行工具，它们也可以独立在终端�
     - 仍可通过 `/opt/devecostudio/tools/bin/`完整路径调用
 - `_hprefix_generic_tools=true`
     - 若设为 `false`，则不添加 `h` 前缀，以原名暴露 `codelinter` 和 `Emulator`
+
+这两个变量只对 Arch 包生效。`.deb` / `.rpm` 的 `/usr/bin` 软链在 `nfpm.yaml` 中静态声明，固定为带 `h` 前缀的名字；tarball 则不含 `/usr/bin` 软链。
 
 </td></tr></thead></table>
 </details>
@@ -226,7 +228,7 @@ IDE 运行需要捆绑的华为命令行工具，它们也可以独立在终端�
 
 ### 模拟器
 
-模拟器可用，但首次使用前需要通过命令行同意软件协议并下载系统镜像。
+模拟器可用，但首次使用前需要同意软件协议并下载系统镜像。IDE 的 Device Manager 会列出云端镜像（非公开的 HarmonyOS 镜像需要登录华为账号），命令行方式则可以匿名下载。
 
 <details>
 <summary><b>怎么做？</b></summary>
@@ -279,7 +281,7 @@ PKGBUILD 解压 Mac DMG，取出平台无关的部分，然后用 IntelliJ IDEA 
 
 其一，华为的代码只区分 Mac 与非 Mac，而非 Mac 分支硬编码了 `Emulator.exe` 文件名。在 Linux 上这个文件不存在，导致 Device Manager 和调试不可用。本包通过符号链接修复：`tools/emulator/` 下的 `Emulator.exe -> Emulator`。
 
-其二，系统镜像必须手动下载，这是官方安装器的工作方式决定的：当模拟器缺失时，其向导会同时下载二进制和系统镜像。由于本包已内置二进制，IDE 认为模拟器已安装、从不弹出向导，系统镜像成了唯一缺失的部分——获取方式见上文"模拟器"一节。
+其二，Device Manager 里可以列出云端系统镜像——IDE 被改为向华为服务端上报 `osType` 为 `windows`，华为自己的 Linux CLI 模拟器也是这么做的。
 
 其三，模拟器的软件协议：IDE 直接启动模拟器二进制，如果协议从未被同意，它会静默等待输入 `y`。`Emulator` 包装器在首次使用时自动同意（当 `~/Library/Caches/Huawei/Emulator26.0/.emu_config` 不存在时，执行 `hemulator ...` 会运行 `-license accept` 并退出），因此当你在 IDE 中使用时协议已经就绪。如需退出自动同意，请清空该 `.emu_config` 文件。
 

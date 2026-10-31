@@ -22,13 +22,29 @@ on:
         required: false
         default: ''
       mac_zip_sha256:
-        description: 'SHA256 of the Mac zip. Leave empty to use the value in PKGBUILD.'
+        description: 'SHA256 of the Mac zip. Leave empty to skip verification (PKGBUILD default: SKIP).'
         required: false
         default: ''
       cli_zip_sha256:
-        description: 'SHA256 of the commandline-tools zip. Leave empty to use the value in PKGBUILD.'
+        description: 'SHA256 of the commandline-tools zip. Leave empty to skip verification (PKGBUILD default: SKIP).'
         required: false
         default: ''
+      make_arch:
+        description: 'Build the Arch package (.pkg.tar.zst)'
+        type: boolean
+        default: true
+      make_deb:
+        description: 'Build the .deb'
+        type: boolean
+        default: true
+      make_rpm:
+        description: 'Build the .rpm (slowest)'
+        type: boolean
+        default: true
+      make_tarball:
+        description: 'Build the distro-agnostic tarball'
+        type: boolean
+        default: true
 
 jobs:
   build:
@@ -51,6 +67,7 @@ jobs:
           path: devecostudio
 
       - name: Add swap on the host (rpm packaging needs ~16 GB RSS)
+        if: inputs.make_rpm
         run: |
           # host job: the runner user has passwordless sudo; a real swapfile
           # on the host is inherited by the build container below.
@@ -68,17 +85,17 @@ jobs:
             sed -i "s/^pkgver=.*/pkgver=${{ inputs.pkgver }}/" PKGBUILD
             echo "pkgver overridden to ${{ inputs.pkgver }}"
           fi
-          # The PKGBUILD takes the two user-supplied zip checksums from
-          # MAC_ZIP_SHA256 / CLI_ZIP_SHA256 before its pinned values, so an
-          # override is just an environment variable (makepkg, build.sh and
-          # the container below all see it). No line-number editing.
+          # The PKGBUILD defaults the two user-supplied zip checksums to
+          # SKIP; MAC_ZIP_SHA256 / CLI_ZIP_SHA256 pin them when supplied.
+          # Passing them as environment variables means makepkg, build.sh
+          # and the container below all see them. No line-number editing.
           if [[ -n "${{ inputs.mac_zip_sha256 }}" ]]; then
             echo "MAC_ZIP_SHA256=${{ inputs.mac_zip_sha256 }}" >> "$GITHUB_ENV"
-            echo "mac zip sha256 overridden"
+            echo "mac zip sha256 pinned"
           fi
           if [[ -n "${{ inputs.cli_zip_sha256 }}" ]]; then
             echo "CLI_ZIP_SHA256=${{ inputs.cli_zip_sha256 }}" >> "$GITHUB_ENV"
-            echo "cli zip sha256 overridden"
+            echo "cli zip sha256 pinned"
           fi
 
       - name: Download source archives
@@ -105,10 +122,15 @@ jobs:
 
       - name: Build and package inside archlinux container (x86_64)
         if: inputs.target_arch == 'x86_64'
+        env:
+          MAKE_ARCH: ${{ inputs.make_arch }}
+          MAKE_DEB: ${{ inputs.make_deb }}
+          MAKE_RPM: ${{ inputs.make_rpm }}
+          MAKE_TARBALL: ${{ inputs.make_tarball }}
         run: |
           # Everything in this step runs as root inside the container; the
           # container inherits the host's memory + swap (added above).
-          docker run --rm \
+          docker run --rm -e MAKE_ARCH -e MAKE_DEB -e MAKE_RPM -e MAKE_TARBALL \
             -e MAC_ZIP_SHA256 -e CLI_ZIP_SHA256 \
             -v "$GITHUB_WORKSPACE":/work -w /work \
             archlinux:base-devel bash -c '
@@ -120,23 +142,31 @@ jobs:
             useradd -m builder
             echo "builder ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers
             chown -R builder:builder /work
+            # A run that skips the Arch package only needs the staging tree
+            # the other formats are made from, so --noarchive saves the zstd
+            # step. No -c either way: --clean removes pkg/.
+            makepkg_args=(-sf --noconfirm)
+            [[ $MAKE_ARCH == true ]] || makepkg_args+=(--noarchive)
             runuser -u builder -- bash -c "
               cd /work/devecostudio
-              # no -c: makepkg --clean removes pkg/, which the packaging
-              # step below needs (build.sh --stage reads the staging tree)
-              makepkg -sf --noconfirm
+              makepkg ${makepkg_args[*]}
             "
-            # nfpm is not in the Arch repos; fetch the static binary from
-            # the GitHub release (pinned version; update deliberately).
-            curl -fL https://github.com/goreleaser/nfpm/releases/download/v2.47.0/nfpm_2.47.0_Linux_x86_64.tar.gz \
-              | tar xz -C /usr/local/bin nfpm
-            nfpm --version | grep -m1 GitVersion
+            if [[ $MAKE_DEB == true || $MAKE_RPM == true ]]; then
+              # nfpm is not in the Arch repos; fetch the static binary from
+              # the GitHub release (pinned version; update deliberately).
+              curl -fL https://github.com/goreleaser/nfpm/releases/download/v2.47.0/nfpm_2.47.0_Linux_x86_64.tar.gz \
+                | tar xz -C /usr/local/bin nfpm
+              nfpm --version | grep -m1 GitVersion
+            fi
             cd /work/devecostudio
             if [[ -d pkg/devecostudio ]]; then
-              # --stage packages the existing makepkg tree: it always emits
-              # the distro-agnostic tarball, and --deb/--rpm add the nfpm
-              # packages — no duplicate tar step needed.
-              ./build.sh --stage=pkg/devecostudio --deb --rpm
+              # --stage packages the existing makepkg tree; --deb/--rpm add
+              # the nfpm packages and --no-tarball drops the gzip step.
+              pkg_args=(--stage=pkg/devecostudio)
+              if [[ $MAKE_DEB == true ]]; then pkg_args+=(--deb); fi
+              if [[ $MAKE_RPM == true ]]; then pkg_args+=(--rpm); fi
+              if [[ $MAKE_TARBALL != true ]]; then pkg_args+=(--no-tarball); fi
+              ./build.sh "${pkg_args[@]}"
             else
               echo "pkg/devecostudio not found; skipping packages"
             fi
@@ -151,22 +181,32 @@ jobs:
           # strip, and envsubst for nfpm.yaml.
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            jq python3 p7zip-full libarchive-tools unzip binutils gettext-base
+            jq python3 p7zip-full libarchive-tools unzip binutils gettext-base patchelf
 
       - name: Build and package with build.sh (aarch64)
         if: inputs.target_arch == 'aarch64'
+        env:
+          MAKE_DEB: ${{ inputs.make_deb }}
+          MAKE_RPM: ${{ inputs.make_rpm }}
+          MAKE_TARBALL: ${{ inputs.make_tarball }}
         run: |
-          # nfpm is not packaged for Ubuntu either; static binary, pinned.
-          curl -fL https://github.com/goreleaser/nfpm/releases/download/v2.47.0/nfpm_2.47.0_Linux_arm64.tar.gz \
-            | sudo tar xz -C /usr/local/bin nfpm
-          nfpm --version | grep -m1 GitVersion
           cd devecostudio
+          args=(--arch=aarch64)
+          if [[ $MAKE_DEB == true || $MAKE_RPM == true ]]; then
+            # nfpm is not packaged for Ubuntu either; static binary, pinned.
+            curl -fL https://github.com/goreleaser/nfpm/releases/download/v2.47.0/nfpm_2.47.0_Linux_arm64.tar.gz \
+              | sudo tar xz -C /usr/local/bin nfpm
+            nfpm --version | grep -m1 GitVersion
+            if [[ $MAKE_DEB == true ]]; then args+=(--deb); fi
+            if [[ $MAKE_RPM == true ]]; then args+=(--rpm); fi
+          fi
+          if [[ $MAKE_TARBALL != true ]]; then args+=(--no-tarball); fi
           # No makepkg here: build.sh runs the PKGBUILD's prepare()/package()
-          # itself and then emits tarball + .deb + .rpm.
-          ./build.sh --arch=aarch64 --deb --rpm
+          # itself and then emits the selected formats.
+          ./build.sh "${args[@]}"
 
       - name: Upload Arch package
-        if: inputs.target_arch == 'x86_64'
+        if: inputs.make_arch && inputs.target_arch == 'x86_64'
         uses: actions/upload-artifact@v4
         with:
           name: devecostudio-arch-${{ inputs.target_arch }}
@@ -174,6 +214,7 @@ jobs:
           if-no-files-found: warn
 
       - name: Upload Debian package
+        if: inputs.make_deb
         uses: actions/upload-artifact@v4
         with:
           name: devecostudio-deb-${{ inputs.target_arch }}
@@ -181,6 +222,7 @@ jobs:
           if-no-files-found: warn
 
       - name: Upload RPM package
+        if: inputs.make_rpm
         uses: actions/upload-artifact@v4
         with:
           name: devecostudio-rpm-${{ inputs.target_arch }}
@@ -188,6 +230,7 @@ jobs:
           if-no-files-found: warn
 
       - name: Upload tarball
+        if: inputs.make_tarball
         uses: actions/upload-artifact@v4
         with:
           name: devecostudio-tarball-${{ inputs.target_arch }}

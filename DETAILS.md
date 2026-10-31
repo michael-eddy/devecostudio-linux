@@ -20,11 +20,14 @@ platform-native (and unusable on Linux) or duplicated by the CLI: `jbr`,
 (`prepare()`).
 
 The two Huawei zips are **user-supplied** (Huawei's download links are
-signed and expire). `makepkg` needs them renamed to the version-independent
-names (`devecostudio-mac.zip`, `commandline-tools-linux-{x64,arm64}.zip`);
+signed and expire), renamed to version-independent filenames
+(`devecostudio-mac.zip`, `commandline-tools-linux-{x64,arm64}.zip`);
 `build.sh` also accepts Huawei's own versioned filenames. Only the IDEA and
-CPython archives are auto-downloaded. Checksums live in `sha256sums`; users
-changing versions update `pkgver` + the two checksums (or use `SKIP`).
+CPython tarballs are auto-downloaded. The two Huawei zips are `'SKIP'` in
+`sha256sums` by default (signed, expiring links; Huawei also re-issues the
+same version with different bytes), so a new version only needs `pkgver`;
+set `MAC_ZIP_SHA256`/`CLI_ZIP_SHA256` to pin them. The IDEA and CPython
+tarballs keep real sums.
 
 ### Target architectures: x86_64 and aarch64
 
@@ -33,8 +36,9 @@ changing versions update `pkgver` + the two checksums (or use `SKIP`).
 top of the PKGBUILD: the CLI zip name, the IDEA tarball name/URL, the CPython
 build triple, the IDEA `lib/native/<dir>` + `lib/jna/<dir>` sources, the
 `product-info.json` `launch[].arch` token, and the deb/rpm arch spellings. Per
-architecture four checksums are pinned (Mac zip, CLI zip, IDEA, CPython), and
-`source`/`sha256sums` keep the same positions so the two arrays stay parallel.
+architecture the IDEA and CPython checksums are pinned; the two Huawei zips
+stay `SKIP` (see above). `source`/`sha256sums` keep the same positions so the
+two arrays stay parallel.
 
 Trap: because `sha256sums` holds variables rather than literals, `updpkgsums`
 replaces the whole array with the hashes of the files present locally — fine
@@ -85,14 +89,86 @@ Two consequences of the symlink:
 - The `.exe` cleanup pass must keep it: `find "$_pkg" -name '*.exe' -not -name 'Emulator.exe' -delete`. (A past bug deleted it; it only existed locally because it had been created by hand.)
 - The emulator binary itself comes from the **CLI** zip (Linux ELF), not the Mac DMG (Mach-O).
 
+### Emulator bzip2 soname (`libbz2.so.1.0` -> `libbz2.so.1`)
+
+The emulator binary and its bundled `libavformat.so` were linked against the
+Debian-style bzip2 soname `libbz2.so.1.0`. Fedora, RHEL and openEuler ship
+`bzip2-libs` whose soname is `libbz2.so.1`, so there the emulator dies with
+`error while loading shared libraries: libbz2.so.1.0` — and because the IDE
+queries the emulator every second for the device list and the Device Manager,
+the device list stays empty instead of showing an error.
+
+`libbz2.so.1` exists on Debian (`libbz2-1.0`), Fedora (`bzip2-libs`) and Arch
+(`bzip2`) alike, so `package()` retargets both objects with
+`patchelf --replace-needed libbz2.so.1.0 libbz2.so.1` and then asserts the new
+name with `patchelf --print-needed`. The retarget is done at build time rather
+than by an install hook for two reasons: the distro-agnostic tarball has no
+install hooks at all, and a symlink created inside `/opt/devecostudio` by a
+postinstall script is unowned by the package and would also run on removal
+(the same script is wired to both `postinstall` and `postremove` in
+`nfpm.yaml`). `patchelf` is therefore a build dependency, and `bzip2` is a
+runtime dependency of the Arch package (the deb/rpm equivalents are
+`libbz2-1.0` / `bzip2-libs` in `nfpm.yaml`).
+
+Unrelated but adjacent fragility: the package ships `libavformat.so` without a
+versioned name while its SONAME is `libavformat.so.61`, so `libavdevice.so` and
+`libavfilter.so` can only resolve it from the host's ffmpeg. The normal emulator
+start path does not load them, but a host whose ffmpeg major differs would
+break the media pipeline.
+
 ### Emulator system images
 
 The IDE's "install emulator" wizard only appears when the emulator binary
 is missing, and downloads binary **and** system image together. Because we
-bundle the binary, the wizard never triggers — system images are the only
-missing piece and must be fetched manually:
-`Emulator -install -deviceType phone -osVersion "<version>"` (anonymous),
-or copied from another platform's install into `~/.Huawei/Sdk/system-image/`.
+bundle the binary, the wizard never triggers. The images themselves are listed
+in the Device Manager (see the next section for why that works on Linux);
+without touching the IDE they can be fetched anonymously with
+`Emulator -install -deviceType phone -osVersion "<version>"`, or copied from
+another platform's install into `~/.Huawei/Sdk/system-image/`.
+
+### Emulator cloud image list (`osType` bent to `windows`)
+
+Huawei's remote SDK manager (`POST .../sdkmanager/v9/hos/getSdkList`) returns
+an empty list for `osType: "linux"` and the full image set for `"windows"`.
+The IDE builds that parameter through `SdkSettings.getOsType()`, whose default
+method body is literally `invokestatic OsTypeUtil.getOsType()`, on the class in
+`plugins/openharmony/lib/sdk-core-*.jar`. That method maps `os.name` to
+`mac` / `windows` / `linux` / `other` through constant-pool strings.
+`scripts/patch-emulator-list.py` rewrites its Linux branch (`ldc #31`,
+"linux", followed by `areturn`) to return the "windows" constant instead. That
+is exactly what Huawei's own Linux CLI emulator does: the binary carries
+`windows` immediately before the `osType` request field.
+
+Three constraints the patcher is built around:
+
+- **Only the sdk-core copy is patched.** `lib/hwlib.jar` ships a second
+  `OsTypeUtil.getOsType()` whose callers are `DevEcoUpdateCheckerService` (the
+  update checker) and `projectmgmt`'s `RenderHashMap`, which does
+  `putIfAbsent("osType", ...)` and so feeds `windows` into the project-template
+  renderer. Bending that copy would make the IDE pretend to be Windows to the
+  update server and inject `windows` into generated project files, for no
+  benefit: the whole SDK-manager chain (`SdkSettings`,
+  `AbstractRemoteComponentLoader`, `InstallTaskImpl`,
+  `OhRemoteComponentLoader`, `ARKUIXRemoteComponentLoader`) resolves to the
+  sdk-core class.
+- **Constant-pool indices are resolved, not hardcoded.** `#31`/`#27` are
+  incidental to the class layout, so the patcher parses the pool, finds the
+  `String` entries for "linux" and "windows", and handles both `ldc` and
+  `ldc_w`. It exits non-zero when the expected shape is absent, so an upstream
+  reshuffle fails the build instead of shipping a silent no-op.
+- **x86_64 only.** The images are x86_64 QEMU guests, so the patcher skips any
+  tree whose `tools/emulator/Emulator` is not `EM_X86_64` - a non-x86_64 IDE
+  would otherwise list images it cannot boot.
+
+One side effect is worth knowing: the same utility serves every SDK-manager
+request, so with the patch in place the **SDK Manager sees the Windows
+component list**. Install additional SDKs the way `install-extra-sdk.sh` does
+(from Huawei's commandline-tools zip) rather than through the IDE's SDK
+Manager.
+
+Verified on 26.0.0.851: `getOsType()` returns `windows` from the patched jar
+(`linux` from the pristine one), and the Device Manager lists the cloud
+images.
 
 ### Emulator paths (`~/Library/Huawei/Sdk`)
 
@@ -725,11 +801,12 @@ Two modes:
   `pkg/`) without building. This is what the GitHub Actions workflow uses
   after `makepkg` — no duplicated build.
 
-Both modes always produce the distro-agnostic tarball
+Both modes produce the distro-agnostic tarball
 (`devecostudio-<ver>-linux-<arch>.tar.gz`, `gzip -1` for speed — the same
-compression the workflow uses), and optionally `.deb`/`.rpm` with **nfpm**
-(`--deb`/`--rpm`), named with the format's own arch spelling
-(`_deb_arch`/`_rpm_arch`, both derived from `CARCH`). `-h`/`--help` prints usage.
+compression the workflow uses) unless `--no-tarball` is given, plus
+optionally `.deb`/`.rpm` with **nfpm** (`--deb`/`--rpm`), named with the
+format's own arch spelling (`_deb_arch`/`_rpm_arch`, both derived from
+`CARCH`). `-h`/`--help` prints usage.
 
 What build.sh does beyond makepkg:
 
@@ -783,21 +860,33 @@ the nfpm rpm packager builds the whole cpio payload in memory and peaks at
   Arch container: `docker run --rm -v $GITHUB_WORKSPACE:/work archlinux:base-devel`,
   `makepkg -sf` (**no `-c`** — `--clean` removes `pkg/`, which the packaging
   step needs) as a non-root `builder` user, then `/work/build.sh
-  --stage=pkg/devecostudio --deb --rpm` (tarball + nfpm deb/rpm from the same
-  tree).
+  --stage=pkg/devecostudio ...` (tarball + nfpm deb/rpm from the same
+  tree). nfpm is not in the Arch repos, so it is downloaded from the GitHub
+  release (`nfpm_2.47.0_Linux_x86_64.tar.gz`, version pinned — update
+  deliberately).
 - `aarch64` runs on `ubuntu-24.04-arm`, where there is no makepkg (and no
   official Arch arm64 container image): the dependencies are installed with
-  apt (`jq python3 p7zip-full libarchive-tools unzip binutils gettext-base`)
-  and `./build.sh --arch=aarch64 --deb --rpm` builds the tree itself. No Arch
-  package is produced for aarch64 — Arch Linux ARM users run `makepkg -si`.
-- nfpm is not in the Arch repos or Ubuntu either; the static binary is
-  downloaded from the GitHub release (`nfpm_2.47.0_Linux_{x86_64,arm64}.tar.gz`
-  matching the runner, version pinned — update deliberately).
-- The checksum overrides are plain environment variables (`MAC_ZIP_SHA256`,
-  `CLI_ZIP_SHA256`), which the PKGBUILD prefers over its pinned values. They
-  are exported to the job and passed into the container with `docker run -e`.
-  (Previously the workflow `sed`-ed the `sha256sums` array by line number —
-  fragile, and wrong as soon as the array became arch-conditional.)
+  apt (`jq python3 p7zip-full libarchive-tools unzip binutils gettext-base
+  patchelf`) and `./build.sh --arch=aarch64 ...` builds the tree itself. No
+  Arch package is produced for aarch64 — Arch Linux ARM users run `makepkg -si`.
+- nfpm on the ARM runner comes from the matching static release
+  (`nfpm_2.47.0_Linux_arm64.tar.gz`).
+- `MAC_ZIP_SHA256` / `CLI_ZIP_SHA256` optionally pin the two Huawei zips
+  (the PKGBUILD defaults them to `SKIP`). They are exported to the job and
+  passed into the container with `docker run -e`. (Previously the workflow
+  `sed`-ed the `sha256sums` array by line number — fragile, and wrong as
+  soon as the array became arch-conditional.)
+
+The run is trimmed by four boolean inputs — `make_arch`, `make_deb`,
+`make_rpm`, `make_tarball` (all on by default):
+
+- `make_arch=false` adds `makepkg --noarchive`: the Arch package is not
+  needed, only the staging tree the other formats are made from, so the
+  zstd step is skipped.
+- `make_deb`/`make_rpm=false` skips the nfpm download and that format;
+  `make_rpm=false` also skips the 14 GB swapfile step, since nothing else
+  peaks near the runner's RAM.
+- `make_tarball=false` passes `--no-tarball`, dropping the 4 GB gzip.
 
 Artifacts are uploaded **separately** (not one giant bundle) so users
 only download what they need, with the target architecture in the name;
