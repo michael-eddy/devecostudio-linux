@@ -134,7 +134,7 @@ jobs:
             -e MAC_ZIP_SHA256 -e CLI_ZIP_SHA256 \
             -v "$GITHUB_WORKSPACE":/work -w /work \
             archlinux:base-devel bash -c '
-            set -e
+            set -eo pipefail
             echo "=== free -h (inside container) ==="
             free -h
             pacman -Syu --noconfirm
@@ -142,6 +142,21 @@ jobs:
             useradd -m builder
             echo "builder ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers
             chown -R builder:builder /work
+            if [[ $MAKE_DEB == true || $MAKE_RPM == true ]]; then
+              # nfpm is not in the Arch repos; fetch the static binary from
+              # the GitHub release (pinned version; update deliberately).
+              # Fetched *before* makepkg and into a file rather than piped into
+              # tar: a release-asset 504 is transient, but after the 20-minute
+              # build it discarded everything for nothing — here it fails within
+              # seconds. A pipe also hid the curl error inside the empty-input
+              # gzip error of the downstream tar (run 42470688729).
+              curl -fL --retry 5 --retry-all-errors --retry-delay 5 \
+                --connect-timeout 15 \
+                -o /tmp/nfpm.tar.gz \
+                https://github.com/goreleaser/nfpm/releases/download/v2.47.0/nfpm_2.47.0_Linux_x86_64.tar.gz
+              tar xzf /tmp/nfpm.tar.gz -C /usr/local/bin nfpm
+              nfpm --version | grep GitVersion
+            fi
             # A run that skips the Arch package only needs the staging tree
             # the other formats are made from, so --noarchive saves the zstd
             # step. No -c either way: --clean removes pkg/.
@@ -151,13 +166,6 @@ jobs:
               cd /work/devecostudio
               makepkg ${makepkg_args[*]}
             "
-            if [[ $MAKE_DEB == true || $MAKE_RPM == true ]]; then
-              # nfpm is not in the Arch repos; fetch the static binary from
-              # the GitHub release (pinned version; update deliberately).
-              curl -fL https://github.com/goreleaser/nfpm/releases/download/v2.47.0/nfpm_2.47.0_Linux_x86_64.tar.gz \
-                | tar xz -C /usr/local/bin nfpm
-              nfpm --version | grep -m1 GitVersion
-            fi
             cd /work/devecostudio
             if [[ -d pkg/devecostudio ]]; then
               # --stage packages the existing makepkg tree; --deb/--rpm add
@@ -194,9 +202,16 @@ jobs:
           args=(--arch=aarch64)
           if [[ $MAKE_DEB == true || $MAKE_RPM == true ]]; then
             # nfpm is not packaged for Ubuntu either; static binary, pinned.
-            curl -fL https://github.com/goreleaser/nfpm/releases/download/v2.47.0/nfpm_2.47.0_Linux_arm64.tar.gz \
-              | sudo tar xz -C /usr/local/bin nfpm
-            nfpm --version | grep -m1 GitVersion
+            # Into a file, not piped into tar, and with retries: a release-asset
+            # 504 should be visible as a curl error instead of tar's
+            # "unexpected end of file" (see the x86_64 step above).
+            curl -fL --retry 5 --retry-all-errors --retry-delay 5 \
+              --connect-timeout 15 \
+              -o /tmp/nfpm.tar.gz \
+              https://github.com/goreleaser/nfpm/releases/download/v2.47.0/nfpm_2.47.0_Linux_arm64.tar.gz
+            tar xzf /tmp/nfpm.tar.gz -C /tmp nfpm
+            sudo mv /tmp/nfpm /usr/local/bin/nfpm
+            nfpm --version | grep GitVersion
             if [[ $MAKE_DEB == true ]]; then args+=(--deb); fi
             if [[ $MAKE_RPM == true ]]; then args+=(--rpm); fi
           fi

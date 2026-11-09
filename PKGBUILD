@@ -23,11 +23,11 @@
 
 pkgname=devecostudio
 pkgdesc='Huawei DevEco Studio repackaged for Arch Linux'
-pkgver=26.0.0.851
-_ideaver=2026.1.3
+pkgver=26.0.0.865
+_ideaver=2026.1.1
 _cpythonver=3.12.10
 _cpythonrel=20250409
-pkgrel=5
+pkgrel=1
 # ── Target architecture ──
 # makepkg sets CARCH; build.sh exports it (defaults to the host, --arch to
 # override). Every native component comes from the target-arch archive (IDEA
@@ -44,7 +44,7 @@ case "$CARCH" in
     _deb_arch=amd64
     _rpm_arch=x86_64
     _py_triple=x86_64-unknown-linux-gnu
-    _sha_idea=a6f049716da1d09d9e0ec1500c60bf01a5ff8a0fe2419178dd1ff2fdb2b77563
+    _sha_idea=7a58d386f2a2e5a8cd7e4591657b4fe599aeac22d960c7accf5f927846507bfb
     _sha_python=e9cf6f7da499a4400ba30ae1da8f7ef25ce97827bd8c1084717aa05438035186
     ;;
   aarch64)
@@ -56,7 +56,7 @@ case "$CARCH" in
     _deb_arch=arm64
     _rpm_arch=aarch64
     _py_triple=aarch64-unknown-linux-gnu
-    _sha_idea=7659e791609233c3e6bf67c1bfcc86f5fa1176477ca5815ae6125b0eae84a88b
+    _sha_idea=8e756a0c29818b1de78d3c4381ad1a1bcf42f5fbc35bbd209c4dc8fe7bc7b570
     _sha_python=91557c4bc1f65c65c2bf1d0fc7a2816d21b1128f11d2d421af7bd5f6ce07232a
     ;;
   *)
@@ -217,6 +217,15 @@ package() {
   cp -a "$_cli/hstack/" "$_pkg/tools/hstack"
   cp -a "$_cli/codelinter/" "$_pkg/tools/codelinter"
   cp -a "$_cli/emulator/" "$_pkg/tools/emulator"
+  msg2 "Making the staged tree writable..."
+  # The DMG and the CLI zip ship read-only modes (the x64 Emulator is 0540),
+  # and everything below rewrites files in place: patchelf on the emulator
+  # binaries, patch-previewer.py on hvigor, patch-emulator-list.py inside the
+  # sdk-core jar. makepkg runs package() under fakeroot, where those checks
+  # are bypassed; the standalone build.sh runs as the calling user, so without
+  # this pass every one of those writes dies with EACCES. The "Fixing
+  # permissions" pass near the end sets the final 644/755 anyway.
+  find "$_pkg" -type f ! -perm -u=w -exec chmod u+w {} +
   # arktsdoc (new in 26.0.0.821): ArkTS doc generator, Linux node wrapper.
   # arktsdoc-deveco resolves ARKTSDOC_HOME/../.. = /opt/devecostudio, so its
   # tools/node + sdk paths are already correct; arktsdoc (main wrapper)
