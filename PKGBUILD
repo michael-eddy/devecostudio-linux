@@ -407,7 +407,7 @@ package() {
     --arg launcher "bin/devecostudio" \
     --arg java "jbr/bin/java" \
     --arg vmopts "bin/devecostudio64-lin.vmoptions" \
-    --arg wmclass "deveco-studio" \
+    --arg wmclass "jetbrains-deveco-studio" \
     --arg svg "bin/devecostudio.svg" \
     '.svgIconPath = $svg |
      .launch[0].os = $os |

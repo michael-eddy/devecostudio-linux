@@ -5,5 +5,6 @@ Exec=/opt/devecostudio/bin/devecostudio.sh
 Icon=/opt/devecostudio/bin/devecostudio.svg
 Terminal=false
 Type=Application
+StartupNotify=true
 Categories=Development;IDE;
-StartupWMClass=deveco-studio
+StartupWMClass=jetbrains-deveco-studio

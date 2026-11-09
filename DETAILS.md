@@ -350,6 +350,45 @@ use their original names (Huawei-specific, unlikely to collide), while
 unless `_hprefix_generic_tools=false`. Toggle both at the top of the
 PKGBUILD.
 
+### Desktop entry & taskbar icon
+
+The dock/taskbar does **not** draw the window's own icon: GNOME (and Zorin's
+taskbar) resolves the window's WM_CLASS to a `.desktop` file and shows that
+file's `Icon`. Only a window that resolves to *no* app falls back to
+`_NET_WM_ICON` — which is exactly the "stuck with the default icon" symptom,
+and it also leaves a second, duplicate launcher tile next to the window.
+
+The value that resolves is `jetbrains-deveco-studio`. It is **not** taken
+from the `startupWmClass` the build writes into `product-info.json`:
+
+- the Linux launcher never reads that key — `strings bin/devecostudio` has no
+  `wmclass` in it, and the splash/utility windows keep the argv[0]-derived
+  `"devecostudio", "Devecostudio"` class instead. The PKGBUILD still writes
+  the key, with the same string as the desktop entry, so the two copies
+  cannot drift apart if a future launcher starts honouring it;
+- the main project frame and IDEA's "Content window" get their class from the
+  JVM: `ApplicationNamesSettings.getWMClass()` = `"jetbrains-"` + the `name`
+  field of `product-info.json`, lowercased with spaces → dashes.
+  "DevEco Studio" → `jetbrains-deveco-studio`. Both halves of WM_CLASS are
+  that one string, so a single `StartupWMClass` covers res_name and res_class
+  matching.
+
+`StartupNotify=true` keeps one launcher tile while the JVM boots: the IDE
+never sends the notification itself, the shell ends it when the first
+matching window maps — which only happens once `StartupWMClass` matches.
+
+`Icon` points at Huawei's SVG by absolute path (librsvg resolves it; a
+hicolor theme install would need an icon-cache refresh in every packaging
+format, so the path is kept).
+
+Maintenance consequence: `StartupWMClass` tracks Huawei's product *name*, so
+verify it after a version bump with the IDE running —
+
+```sh
+xlsclients            # find the window, then:
+xprop -id <id> WM_CLASS
+```
+
 ### vmoptions transformation
 
 `bin/devecostudio64-lin.vmoptions` is the Mac `devecostudio.vmoptions`
@@ -367,7 +406,9 @@ and transformed with `jq` at build time: OS/arch/launcher/java/vmoptions
 paths rewritten (`$APP_PACKAGE/Contents/` → `$IDE_HOME/`), macOS-only
 `--add-opens` (com.apple.*, sun.lwawt) filtered out, Linux add-opens
 (sun.awt.X11, com.sun.java.swing.plaf.gtk) and the native-access
-flag appended, `startupWmClass=deveco-studio`. `launch[].arch` is set from
+flag appended, `startupWmClass=jetbrains-deveco-studio` (the same string as
+`StartupWMClass` in the desktop entry — the Linux launcher ignores the key,
+see "Desktop entry & taskbar icon"). `launch[].arch` is set from
 `$_pinfo_arch` — `amd64` on x86_64, `aarch64` on aarch64, the same spelling
 the matching IDEA `product-info.json` uses. The 202-entry
 `bootClassPathJarNames` comes straight from the DMG — the jq filter never
@@ -989,6 +1030,9 @@ each is ~3–4 GB:
 ### Test checklist (after build)
 
 - [ ] `devecostudio --version` prints the right build
+- [ ] Taskbar: the running window shows the DevEco icon in one tile (no
+      duplicate launcher) — `xprop -id <window> WM_CLASS` equals the
+      `StartupWMClass` in `devecostudio.desktop`
 - [ ] Project opens; hvigor **sync** succeeds (no Node.js path warning)
 - [ ] C/C++ support: open a file under a module's `src/main/cpp` — completion
       works, no "clangd setExecutable failed" notification
